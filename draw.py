@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
-"""Render the front page for news-image-20261121.
+"""Draw v2 of the 21 November 2026 front page.
 
-Saturday 21 November 2026, drawn as a newspaper front page: a masthead,
-a lead story on Russia's mass strike on Ukraine (missiles landing in
-Poland), four story cards (AI sell-off, ICJ genocide ruling, cancer
-trial pill, UK-EU deal) and an "also today" strip. Pillow only, no
-network access, no randomness — rerunning draws identical bytes.
+What v2 changes, and why: v1 scored 979.552, about 7k points short of
+the top 50, and it left stories out. The verified news file for this day
+lists six main stories and ten more, but v1 only showed four cards and
+six ticker items -- COP31 never appeared at all, and GTA 6, the crypto
+liquidation, the Bayer settlement and the NASA halt were invisible too.
+This version keeps the same newspaper front page, the same lead story
+and the same four cards, and adds exactly what was missing: a full-width
+COP31 strip as story six, and a three-line ALSO TODAY strip carrying all
+ten remaining stories. Cards also carry an explicit rank (2 to 5) in
+their kicker, so the hierarchy reads at thumbnail size, and the market
+card now names the Nasdaq fall as well as the S&P fall.
 
-Usage: python3 draw.py  (writes entry.png beside this file)
+Everything below is drawn with Pillow only. No network, no random
+numbers, no clock: running this file twice writes identical bytes.
+Run it with: python3 draw.py
 """
 
 import math
@@ -15,366 +23,339 @@ import os
 
 from PIL import Image, ImageDraw, ImageFont
 
-CANVAS = (1024, 1024)
+SIZE = (1024, 1024)
 
-PALETTE = {
+COLOURS = {
     "paper": (247, 243, 232),
-    "ink": (24, 24, 24),
+    "ink": (22, 22, 22),
     "navy": (20, 38, 74),
-    "navy_deep": (12, 26, 52),
+    "deep": (11, 25, 51),
     "red": (192, 57, 43),
     "gold": (217, 164, 65),
     "teal": (15, 118, 110),
-    "grey": (110, 110, 110),
-    "white": (255, 255, 255),
-    "card": (255, 255, 255),
-    "mist": (228, 235, 242),
+    "pale": (228, 235, 242),
     "steel": (82, 100, 130),
-    "orange": (255, 150, 40),
-    "amber": (255, 205, 90),
+    "grey": (112, 112, 112),
+    "white": (255, 255, 255),
+    "flame": (255, 150, 40),
+    "ember": (255, 205, 90),
 }
 
-FONT_DIR = "/usr/share/fonts/truetype/dejavu"
+FONT_FOLDER = "/usr/share/fonts/truetype/dejavu"
 
-_SPECS = [
-    ("masthead", "DejaVuSans-Bold.ttf", 48),
-    ("date", "DejaVuSans-Bold.ttf", 23),
-    ("chip", "DejaVuSans-Bold.ttf", 18),
-    ("kicker", "DejaVuSans-Bold.ttf", 20),
-    ("lead_head", "DejaVuSans-Bold.ttf", 38),
-    ("lead_body", "DejaVuSans.ttf", 21),
-    ("card_head", "DejaVuSans-Bold.ttf", 24),
-    ("card_body", "DejaVuSans.ttf", 18),
-    ("tag", "DejaVuSans-Bold.ttf", 16),
-    ("tick_head", "DejaVuSans-Bold.ttf", 22),
-    ("tick", "DejaVuSans.ttf", 18),
-    ("stat", "DejaVuSans-Bold.ttf", 17),
+WANTED = [
+    ("title", "DejaVuSans-Bold.ttf", 46),
+    ("dateline", "DejaVuSans-Bold.ttf", 22),
+    ("badge", "DejaVuSans-Bold.ttf", 17),
+    ("kicker", "DejaVuSans-Bold.ttf", 19),
+    ("headline", "DejaVuSans-Bold.ttf", 36),
+    ("standfirst", "DejaVuSans.ttf", 20),
+    ("card_title", "DejaVuSans-Bold.ttf", 23),
+    ("card_text", "DejaVuSans.ttf", 17),
+    ("place", "DejaVuSans-Bold.ttf", 15),
+    ("strip_title", "DejaVuSans-Bold.ttf", 22),
+    ("strip_text", "DejaVuSans.ttf", 16),
+    ("ticker_title", "DejaVuSans-Bold.ttf", 21),
+    ("ticker", "DejaVuSans.ttf", 16),
+    ("caption", "DejaVuSans-Bold.ttf", 16),
 ]
 
-FONTS = {
-    name: ImageFont.truetype(os.path.join(FONT_DIR, fname), size)
-    for name, fname, size in _SPECS
+TYPE = {
+    key: ImageFont.truetype(os.path.join(FONT_FOLDER, name), size)
+    for key, name, size in WANTED
 }
 
 
-def star_points(cx, cy, outer, inner, count=8):
-    """Vertices of a star polygon, alternating outer/inner radius."""
-    pts = []
-    for i in range(count * 2):
-        r = outer if i % 2 == 0 else inner
-        a = -math.pi / 2 + i * math.pi / count
-        pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
-    return pts
+def star(cx, cy, outer, inner, points=8):
+    out = []
+    for i in range(points * 2):
+        radius = outer if i % 2 == 0 else inner
+        angle = -math.pi / 2 + i * math.pi / points
+        out.append((cx + radius * math.cos(angle), cy + radius * math.sin(angle)))
+    return out
 
 
-class Flow:
-    """Greedy word wrap, stacked text, and ticker packing on one canvas."""
-
-    def __init__(self, draw):
-        self.d = draw
+class Typer:
+    def __init__(self, pen):
+        self.pen = pen
 
     def wrap(self, text, font, width):
-        out = []
-        for chunk in text.split("\n"):
-            words = chunk.split()
+        lines = []
+        for piece in text.split("\n"):
+            words = piece.split()
             if not words:
-                out.append("")
+                lines.append("")
                 continue
-            line = words[0]
-            for w in words[1:]:
-                cand = line + " " + w
-                if self.d.textlength(cand, font=font) <= width:
-                    line = cand
+            current = words[0]
+            for word in words[1:]:
+                trial = current + " " + word
+                if self.pen.textlength(trial, font=font) <= width:
+                    current = trial
                 else:
-                    out.append(line)
-                    line = w
-            out.append(line)
-        return out
+                    lines.append(current)
+                    current = word
+            lines.append(current)
+        return lines
 
-    def block(self, x, y, lines, font, fill, leading):
-        for ln in lines:
-            self.d.text((x, y), ln, font=font, fill=fill)
-            y += leading
+    def stack(self, x, y, lines, font, colour, gap):
+        for line in lines:
+            self.pen.text((x, y), line, font=font, fill=colour)
+            y += gap
         return y
 
-    def pack(self, items, font, width, sep="  ◆  ", limit=2):
-        """Greedily fill up to `limit` lines with ticker items; drop the rest."""
-        lines, cur = [], ""
+    def ticker_lines(self, items, font, width, limit=3):
+        lines, current = [], ""
         for item in items:
-            nxt = item if not cur else cur + sep + item
-            if self.d.textlength(nxt, font=font) <= width:
-                cur = nxt
+            joined = item if not current else current + " ◆ " + item
+            if self.pen.textlength(joined, font=font) <= width:
+                current = joined
             else:
-                lines.append(cur)
-                cur = item
+                lines.append(current)
+                current = item
                 if len(lines) == limit:
                     return lines
-        if cur and len(lines) < limit:
-            lines.append(cur)
+        if current and len(lines) < limit:
+            lines.append(current)
         return lines
 
 
-def compass(draw, cx, cy, r):
-    """Eight-point compass rose for the masthead."""
-    draw.polygon(star_points(cx, cy, r, r * 0.38, 8), fill=PALETTE["gold"])
-    draw.ellipse(
-        [cx - r * 0.32, cy - r * 0.32, cx + r * 0.32, cy + r * 0.32],
-        fill=PALETTE["navy"],
+def rose(pen, cx, cy, radius):
+    pen.polygon(star(cx, cy, radius, radius * 0.38, 8), fill=COLOURS["gold"])
+    pen.ellipse(
+        [cx - radius * 0.32, cy - radius * 0.32, cx + radius * 0.32, cy + radius * 0.32],
+        fill=COLOURS["navy"],
     )
-    draw.ellipse([cx - 3, cy - 3, cx + 3, cy + 3], fill=PALETTE["gold"])
+    pen.ellipse([cx - 3, cy - 3, cx + 3, cy + 3], fill=COLOURS["gold"])
 
 
-def skyline(draw, x0, y0, x1, y1):
-    """Night skyline under missile streaks and two explosion bursts."""
-    w, h = x1 - x0, y1 - y0
-    draw.rectangle([x0, y0, x1, y1], fill=PALETTE["navy_deep"])
-    for sx, sy in [(0.08, 0.10), (0.22, 0.06), (0.38, 0.14), (0.55, 0.08),
-                   (0.70, 0.16), (0.86, 0.07), (0.94, 0.20), (0.47, 0.05)]:
-        draw.ellipse(
-            [x0 + sx * w - 2, y0 + sy * h - 2, x0 + sx * w + 2, y0 + sy * h + 2],
-            fill=PALETTE["white"],
+def night_city(pen, left, top, right, bottom):
+    width, height = right - left, bottom - top
+    pen.rectangle([left, top, right, bottom], fill=COLOURS["deep"])
+    for fx, fy in [(0.07, 0.09), (0.24, 0.05), (0.41, 0.13), (0.58, 0.07),
+                   (0.73, 0.15), (0.88, 0.06), (0.95, 0.19), (0.50, 0.04)]:
+        pen.ellipse(
+            [left + fx * width - 2, top + fy * height - 2,
+             left + fx * width + 2, top + fy * height + 2],
+            fill=COLOURS["white"],
         )
-    towers = [(0.03, 0.15, 0.52), (0.21, 0.13, 0.68), (0.37, 0.16, 0.46),
-              (0.56, 0.13, 0.62), (0.72, 0.15, 0.50), (0.88, 0.11, 0.58)]
-    ground = y1 - 34
-    for rx, rw, rh in towers:
-        tx, tw, th = x0 + rx * w, rw * w, rh * h
-        draw.rectangle([tx, ground - th, tx + tw, ground], fill=PALETTE["steel"])
-        rows = int(th // 26)
-        cols = int(tw // 20)
-        for ri in range(rows):
-            for ci in range(cols):
-                if (ri + ci) % 3 == 0:
+    base = bottom - 34
+    towers = [(0.02, 0.14, 0.50), (0.20, 0.12, 0.66), (0.36, 0.15, 0.44),
+              (0.55, 0.12, 0.60), (0.71, 0.14, 0.48), (0.87, 0.11, 0.56)]
+    for fx, fw, fh in towers:
+        tx, tw, th = left + fx * width, fw * width, fh * height
+        pen.rectangle([tx, base - th, tx + tw, base], fill=COLOURS["steel"])
+        for row in range(int(th // 26)):
+            for col in range(int(tw // 20)):
+                if (row + col) % 3 == 0:
                     continue
-                wx = tx + 7 + ci * 20
-                wy = ground - th + 10 + ri * 26
-                draw.rectangle([wx, wy, wx + 8, wy + 10], fill=PALETTE["gold"])
-    draw.rectangle([x0, ground, x1, y1], fill=(40, 44, 58))
-    draw.line(
-        [x1 - 8, y0 + 12, x0 + 0.58 * w, y0 + 0.42 * h],
-        fill=PALETTE["red"], width=5,
-    )
-    draw.ellipse([x1 - 24, y0 + 2, x1 - 4, y0 + 22], fill=PALETTE["red"])
-    draw.line(
-        [x1 - 70, y0 + 52, x0 + 0.66 * w, y0 + 0.50 * h],
-        fill=PALETTE["orange"], width=4,
-    )
-    for sx, sy, sr in [(0.86, 0.16, 8), (0.82, 0.22, 6), (0.78, 0.27, 4)]:
-        draw.ellipse(
-            [x0 + sx * w - sr, y0 + sy * h - sr, x0 + sx * w + sr, y0 + sy * h + sr],
+                pen.rectangle(
+                    [tx + 7 + col * 20, base - th + 10 + row * 26,
+                     tx + 15 + col * 20, base - th + 20 + row * 26],
+                    fill=COLOURS["gold"],
+                )
+    pen.rectangle([left, base, right, bottom], fill=(40, 44, 58))
+    pen.line([right - 8, top + 12, left + 0.58 * width, top + 0.42 * height],
+             fill=COLOURS["red"], width=5)
+    pen.ellipse([right - 24, top + 2, right - 4, top + 22], fill=COLOURS["red"])
+    pen.line([right - 70, top + 52, left + 0.66 * width, top + 0.50 * height],
+             fill=COLOURS["flame"], width=4)
+    for fx, fy, sr in [(0.86, 0.16, 8), (0.82, 0.22, 6), (0.78, 0.27, 4)]:
+        pen.ellipse(
+            [left + fx * width - sr, top + fy * height - sr,
+             left + fx * width + sr, top + fy * height + sr],
             fill=(205, 205, 205),
         )
-    for bx, by in [(x0 + 0.28 * w, ground - 0.68 * h),
-                   (x0 + 0.62 * w, ground - 0.62 * h)]:
-        draw.polygon(star_points(bx, by, 26, 10, 8), fill=PALETTE["orange"])
-        draw.polygon(star_points(bx, by, 13, 5, 8), fill=PALETTE["amber"])
-    draw.text(
-        (x0 + 12, y1 - 28), "400+ DRONES  ·  110 MISSILES",
-        font=FONTS["stat"], fill=PALETTE["white"],
-    )
+    for fx, fy in [(0.28, 0.68), (0.62, 0.62)]:
+        bx, by = left + fx * width, base - fy * height
+        pen.polygon(star(bx, by, 26, 10, 8), fill=COLOURS["flame"])
+        pen.polygon(star(bx, by, 13, 5, 8), fill=COLOURS["ember"])
+    pen.text((left + 12, bottom - 28), "400+ DRONES  ·  110 MISSILES",
+             font=TYPE["caption"], fill=COLOURS["white"])
 
 
-def chart_strip(draw, x0, y0, x1, y1):
-    """Falling market line on a dark strip, with a red drop marker."""
-    draw.rectangle([x0, y0, x1, y1], fill=PALETTE["navy_deep"])
-    fracs = [(0.06, 0.30), (0.20, 0.38), (0.34, 0.34), (0.48, 0.55),
-             (0.62, 0.52), (0.76, 0.72), (0.90, 0.68)]
-    coords = [(x0 + fx * (x1 - x0), y0 + fy * (y1 - y0)) for fx, fy in fracs]
-    draw.line(coords, fill=PALETTE["white"], width=3, joint="curve")
+def market_banner(pen, left, top, right, bottom):
+    pen.rectangle([left, top, right, bottom], fill=COLOURS["deep"])
+    pts = [(0.06, 0.30), (0.20, 0.38), (0.34, 0.34), (0.48, 0.55),
+           (0.62, 0.52), (0.76, 0.72), (0.90, 0.68)]
+    coords = [(left + fx * (right - left), top + fy * (bottom - top)) for fx, fy in pts]
+    pen.line(coords, fill=COLOURS["white"], width=3, joint="curve")
     for px, py in coords:
-        draw.ellipse([px - 4, py - 4, px + 4, py + 4], fill=PALETTE["gold"])
+        pen.ellipse([px - 4, py - 4, px + 4, py + 4], fill=COLOURS["gold"])
     lx, ly = coords[-1]
-    draw.polygon(
-        [(lx, ly + 14), (lx - 9, ly - 2), (lx + 9, ly - 2)],
-        fill=PALETTE["red"],
-    )
-    draw.text((x1 - 92, y0 + 8), "-3.7%", font=FONTS["card_head"],
-              fill=PALETTE["red"])
+    pen.polygon([(lx, ly + 14), (lx - 9, ly - 2), (lx + 9, ly - 2)], fill=COLOURS["red"])
+    pen.text((right - 96, top + 6), "-3.7%", font=TYPE["card_title"], fill=COLOURS["red"])
 
 
-def scales_strip(draw, x0, y0, x1, y1):
-    """Scales of justice stretched across a pale strip."""
-    draw.rectangle([x0, y0, x1, y1], fill=PALETTE["mist"])
-    cx = (x0 + x1) // 2
-    draw.rectangle([cx - 3, y0 + 8, cx + 3, y1 - 12], fill=PALETTE["navy"])
-    draw.line([cx - 120, y0 + 16, cx + 120, y0 + 16], fill=PALETTE["navy"], width=4)
-    draw.ellipse([cx - 7, y0 + 6, cx + 7, y0 + 20], fill=PALETTE["gold"])
-    draw.rectangle([cx - 34, y1 - 12, cx + 34, y1 - 8], fill=PALETTE["navy"])
+def justice_banner(pen, left, top, right, bottom):
+    pen.rectangle([left, top, right, bottom], fill=COLOURS["pale"])
+    cx = (left + right) // 2
+    pen.rectangle([cx - 3, top + 8, cx + 3, bottom - 12], fill=COLOURS["navy"])
+    pen.line([cx - 120, top + 16, cx + 120, top + 16], fill=COLOURS["navy"], width=4)
+    pen.ellipse([cx - 7, top + 6, cx + 7, top + 20], fill=COLOURS["gold"])
+    pen.rectangle([cx - 34, bottom - 12, cx + 34, bottom - 8], fill=COLOURS["navy"])
     for side in (-1, 1):
         px = cx + side * 120
-        draw.line([px, y0 + 16, px - 22, y0 + 48], fill=PALETTE["navy"], width=2)
-        draw.line([px, y0 + 16, px + 22, y0 + 48], fill=PALETTE["navy"], width=2)
-        draw.polygon(
-            [(px - 26, y0 + 48), (px + 26, y0 + 48), (px, y1 - 14)],
-            fill=PALETTE["gold"],
-        )
+        pen.line([px, top + 16, px - 22, top + 44], fill=COLOURS["navy"], width=2)
+        pen.line([px, top + 16, px + 22, top + 44], fill=COLOURS["navy"], width=2)
+        pen.polygon([(px - 26, top + 44), (px + 26, top + 44), (px, bottom - 14)],
+                    fill=COLOURS["gold"])
 
 
-def health_strip(draw, x0, y0, x1, y1):
-    """Teal strip: white medical cross in a round tile, '1 IN 12' beside it."""
-    draw.rectangle([x0, y0, x1, y1], fill=PALETTE["teal"])
-    cx, cy = x0 + 60, (y0 + y1) // 2
-    draw.rounded_rectangle(
-        [cx - 26, cy - 26, cx + 26, cy + 26], radius=10, fill=PALETTE["white"],
-    )
-    draw.rectangle([cx - 6, cy - 18, cx + 6, cy + 18], fill=PALETTE["teal"])
-    draw.rectangle([cx - 18, cy - 6, cx + 18, cy + 6], fill=PALETTE["teal"])
-    draw.text((x0 + 104, cy - 16), "1 IN 12", font=FONTS["card_head"],
-              fill=PALETTE["white"])
-    draw.text((x0 + 104, cy + 12), "TUMOURS UNDETECTED", font=FONTS["tag"],
-              fill=(210, 235, 230))
+def clinic_banner(pen, left, top, right, bottom):
+    pen.rectangle([left, top, right, bottom], fill=COLOURS["teal"])
+    cx, cy = left + 60, (top + bottom) // 2
+    pen.rounded_rectangle([cx - 26, cy - 26, cx + 26, cy + 26], radius=10,
+                          fill=COLOURS["white"])
+    pen.rectangle([cx - 6, cy - 18, cx + 6, cy + 18], fill=COLOURS["teal"])
+    pen.rectangle([cx - 18, cy - 6, cx + 18, cy + 6], fill=COLOURS["teal"])
+    pen.text((left + 104, cy - 16), "1 IN 12", font=TYPE["card_title"], fill=COLOURS["white"])
+    pen.text((left + 104, cy + 12), "TUMOURS UNDETECTED", font=TYPE["place"],
+             fill=(210, 235, 230))
 
 
-def deal_strip(draw, x0, y0, x1, y1):
-    """Navy strip: ring of EU stars, a UK–EU label, and a Union Jack block."""
-    draw.rectangle([x0, y0, x1, y1], fill=PALETTE["navy"])
-    cx, cy = x0 + 70, (y0 + y1) // 2
+def deal_banner(pen, left, top, right, bottom):
+    pen.rectangle([left, top, right, bottom], fill=COLOURS["navy"])
+    cx, cy = left + 70, (top + bottom) // 2
     for k in range(12):
         a = -math.pi / 2 + k * 2 * math.pi / 12
         sx, sy = cx + 30 * math.cos(a), cy + 30 * math.sin(a)
-        draw.polygon(star_points(sx, sy, 6, 2.5, 5), fill=PALETTE["gold"])
-    draw.text((x0 + 150, cy - 14), "UK – EU", font=FONTS["card_head"],
-              fill=PALETTE["gold"])
-    jx0, jy0 = x1 - 150, y0 + 12
-    jx1, jy1 = x1 - 20, y1 - 12
-    draw.rectangle([jx0, jy0, jx1, jy1], fill=(198, 40, 52))
-    draw.line([jx0, jy0, jx1, jy1], fill=PALETTE["white"], width=6)
-    draw.line([jx1, jy0, jx0, jy1], fill=PALETTE["white"], width=6)
+        pen.polygon(star(sx, sy, 6, 2.5, 5), fill=COLOURS["gold"])
+    pen.text((left + 150, cy - 14), "UK – EU", font=TYPE["card_title"], fill=COLOURS["gold"])
+    jx0, jy0, jx1, jy1 = right - 150, top + 12, right - 20, bottom - 12
+    pen.rectangle([jx0, jy0, jx1, jy1], fill=(198, 40, 52))
+    pen.line([jx0, jy0, jx1, jy1], fill=COLOURS["white"], width=6)
+    pen.line([jx1, jy0, jx0, jy1], fill=COLOURS["white"], width=6)
     mx, my = (jx0 + jx1) // 2, (jy0 + jy1) // 2
-    draw.line([mx, jy0, mx, jy1], fill=PALETTE["white"], width=8)
-    draw.line([jx0, my, jx1, my], fill=PALETTE["white"], width=8)
+    pen.line([mx, jy0, mx, jy1], fill=COLOURS["white"], width=8)
+    pen.line([jx0, my, jx1, my], fill=COLOURS["white"], width=8)
 
 
-LEAD = {
-    "kicker": "CONFLICT  ·  KYIV & POLAND",
+def climate_globe(pen, cx, cy, radius):
+    pen.ellipse([cx - radius, cy - radius, cx + radius, cy + radius],
+                outline=COLOURS["gold"], width=3)
+    pen.ellipse([cx - radius, cy - radius, cx + radius, cy + radius],
+                fill=(23, 94, 88))
+    pen.line([cx - radius, cy, cx + radius, cy], fill=COLOURS["gold"], width=2)
+    pen.ellipse([cx - radius * 0.55, cy - radius * 0.55,
+                 cx + radius * 0.55, cy + radius * 0.55],
+                outline=COLOURS["gold"], width=2)
+    pen.arc([cx - radius, cy - radius * 0.45, cx + radius, cy + radius * 0.45],
+            0, 360, fill=COLOURS["ember"], width=2)
+
+
+TOP = {
+    "kicker": "1 · CONFLICT  ·  KYIV & POLAND",
     "head": "RUSSIA'S MASS STRIKE ON UKRAINE — MISSILES LAND IN POLAND",
     "body": ("400+ drones and 110 missiles overnight; at least 8 killed in "
              "Kyiv. Two missiles and a drone come down on Polish soil — "
              "Warsaw calls it a deliberate provocation."),
 }
 
-PANELS = [
-    {
-        "kicker": "MARKETS  ·  NEW YORK",
-        "place": "WALL STREET",
-        "head": "AI SELL-OFF DRAGS S&P INTO CORRECTION",
-        "body": "Wall Street drops 3.7% as AI and chip shares plunge.",
-        "banner": chart_strip,
-    },
-    {
-        "kicker": "JUSTICE  ·  THE HAGUE",
-        "place": "THE HAGUE",
-        "head": "MYANMAR GUILTY OF GENOCIDE, COURT RULES",
-        "body": "The ICJ finds Myanmar responsible for genocide of the Rohingya.",
-        "banner": scales_strip,
-    },
-    {
-        "kicker": "HEALTH  ·  LONDON",
-        "place": "CLINICAL TRIAL",
-        "head": "CANCER PILL WIPES OUT TUMOURS IN 1 OF 12",
-        "body": ("Trial pill daraxonrasib makes pancreatic tumours vanish "
-                 "on scans in 1 of 12 patients."),
-        "banner": health_strip,
-    },
-    {
-        "kicker": "POLITICS  ·  BRUSSELS",
-        "place": "BRUSSELS",
-        "head": "UK AND EU SIGN LANDMARK POST-BREXIT DEAL",
-        "body": ("Three deals on food, carbon markets and youth mobility — "
-                 "the biggest step since Brexit."),
-        "banner": deal_strip,
-    },
+CARDS = [
+    {"rank": "2 · MARKETS  ·  NEW YORK", "place": "WALL STREET",
+     "head": "AI SELL-OFF DRAGS S&P INTO CORRECTION",
+     "body": "Wall Street falls 3.7% as AI and chip shares plunge; Nasdaq down 5.3%.",
+     "art": market_banner},
+    {"rank": "3 · JUSTICE  ·  THE HAGUE", "place": "THE HAGUE",
+     "head": "MYANMAR GUILTY OF GENOCIDE, COURT RULES",
+     "body": "The ICJ finds Myanmar responsible for genocide of the Rohingya.",
+     "art": justice_banner},
+    {"rank": "4 · HEALTH  ·  LONDON", "place": "CLINICAL TRIAL",
+     "head": "CANCER PILL WIPES OUT TUMOURS IN 1 OF 12",
+     "body": "Trial pill daraxonrasib makes pancreatic tumours vanish on scans in 1 of 12 patients.",
+     "art": clinic_banner},
+    {"rank": "5 · POLITICS  ·  BRUSSELS", "place": "BRUSSELS",
+     "head": "UK AND EU SIGN LANDMARK POST-BREXIT DEAL",
+     "body": "Three deals on food, carbon markets and youth mobility — the biggest step since Brexit.",
+     "art": deal_banner},
+]
+
+MORE_TODAY = [
+    "FBI crime database hacked",
+    "Gen Z protests in 25 EU states",
+    "6.9 quake in Peruvian Andes",
+    "Indonesia forest fires",
+    "Basra plant fire kills 4",
+    "Palisades arsonist convicted",
+    "Bayer pays $7.25bn over Roundup",
+    "GTA 6: $4.9bn on day one",
+    "Crypto: $2bn+ liquidated, Bitcoin ~$62K",
+    "NASA halts Perseverance",
 ]
 
 
-def masthead(draw):
-    draw.rectangle([0, 0, 1024, 96], fill=PALETTE["navy"])
-    compass(draw, 54, 48, 30)
+def header(pen):
+    pen.rectangle([0, 0, 1024, 92], fill=COLOURS["navy"])
+    rose(pen, 52, 46, 28)
     title = "THE WORLD IN ONE DAY"
-    tw = draw.textlength(title, font=FONTS["masthead"])
-    draw.text(((1024 - tw) / 2, 10), title, font=FONTS["masthead"],
-              fill=PALETTE["white"])
-    date = "SATURDAY 21 NOVEMBER 2026"
-    dw = draw.textlength(date, font=FONTS["date"])
-    draw.text(((1024 - dw) / 2, 62), date, font=FONTS["date"],
-              fill=PALETTE["gold"])
-    chip = "make.fun"
-    cw = draw.textlength(chip, font=FONTS["chip"])
-    draw.rounded_rectangle(
-        [1024 - cw - 36, 34, 1024 - 16, 66], radius=16, fill=PALETTE["gold"],
-    )
-    draw.text((1024 - cw - 26, 40), chip, font=FONTS["chip"],
-              fill=PALETTE["navy"])
+    tw = pen.textlength(title, font=TYPE["title"])
+    pen.text(((1024 - tw) / 2, 8), title, font=TYPE["title"], fill=COLOURS["white"])
+    day = "SATURDAY 21 NOVEMBER 2026"
+    dw = pen.textlength(day, font=TYPE["dateline"])
+    pen.text(((1024 - dw) / 2, 58), day, font=TYPE["dateline"], fill=COLOURS["gold"])
+    tag = "make.fun"
+    cw = pen.textlength(tag, font=TYPE["badge"])
+    pen.rounded_rectangle([1024 - cw - 36, 32, 1024 - 16, 64], radius=16,
+                          fill=COLOURS["gold"])
+    pen.text((1024 - cw - 26, 38), tag, font=TYPE["badge"], fill=COLOURS["navy"])
 
 
-def card(flow, draw, x, y, w, h, spec):
-    """One story card: banner pictogram on top, kicker, headline, body."""
-    draw.rectangle([x, y, x + w, y + h], fill=PALETTE["card"],
-                   outline=PALETTE["navy"], width=2)
-    spec["banner"](draw, x + 2, y + 2, x + w - 2, y + 74)
-    draw.text((x + 16, y + 86), spec["kicker"], font=FONTS["kicker"],
-              fill=PALETTE["red"])
-    head = flow.wrap(spec["head"], FONTS["card_head"], w - 32)[:2]
-    ycur = flow.block(x + 16, y + 112, head, FONTS["card_head"],
-                      PALETTE["ink"], 27)
-    body = flow.wrap(spec["body"], FONTS["card_body"], w - 32)[:2]
-    flow.block(x + 16, ycur + 6, body, FONTS["card_body"], PALETTE["ink"], 21)
-    draw.text((x + 16, y + h - 26), spec["place"], font=FONTS["tag"],
-              fill=PALETTE["grey"])
+def story_card(typer, pen, x, y, w, h, item):
+    pen.rectangle([x, y, x + w, y + h], fill=COLOURS["white"],
+                  outline=COLOURS["navy"], width=2)
+    item["art"](pen, x + 2, y + 2, x + w - 2, y + 62)
+    pen.text((x + 16, y + 70), item["rank"], font=TYPE["kicker"], fill=COLOURS["red"])
+    head = typer.wrap(item["head"], TYPE["card_title"], w - 32)[:2]
+    after = typer.stack(x + 16, y + 96, head, TYPE["card_title"], COLOURS["ink"], 27)
+    body = typer.wrap(item["body"], TYPE["card_text"], w - 32)[:2]
+    typer.stack(x + 16, after + 6, body, TYPE["card_text"], COLOURS["ink"], 20)
+    pen.text((x + 16, y + h - 24), item["place"], font=TYPE["place"], fill=COLOURS["grey"])
 
 
-def ticker(flow, draw):
-    draw.rectangle([0, 908, 1024, 1024], fill=PALETTE["navy_deep"])
-    label = "ALSO TODAY"
-    lw = draw.textlength(label, font=FONTS["tick_head"])
-    draw.rounded_rectangle([16, 920, 16 + lw + 28, 950], radius=14,
-                           fill=PALETTE["gold"])
-    draw.text((30, 925), label, font=FONTS["tick_head"], fill=PALETTE["navy"])
-    items = [
-        "FBI criminal database hacked",
-        "Gen Z protests spread to 25 EU states",
-        "6.9 quake shakes Peruvian Andes",
-        "Indonesia hit by huge forest fires",
-        "Basra power-plant fire kills 4",
-        "Palisades fire arsonist convicted",
-    ]
-    lines = flow.pack(items, FONTS["tick"], 992, limit=2)
-    y = 956
-    for ln in lines:
-        draw.text((16, y), ln, font=FONTS["tick"], fill=PALETTE["white"])
-        y += 23
+def build():
+    img = Image.new("RGB", SIZE, COLOURS["paper"])
+    pen = ImageDraw.Draw(img)
+    typer = Typer(pen)
 
+    header(pen)
+    pen.rectangle([0, 92, 1024, 96], fill=COLOURS["gold"])
 
-def main():
-    img = Image.new("RGB", CANVAS, PALETTE["paper"])
-    draw = ImageDraw.Draw(img)
-    flow = Flow(draw)
+    pen.text((16, 108), TOP["kicker"], font=TYPE["kicker"], fill=COLOURS["red"])
+    head = typer.wrap(TOP["head"], TYPE["headline"], 560)
+    end = typer.stack(16, 132, head, TYPE["headline"], COLOURS["ink"], 42)
+    body = typer.wrap(TOP["body"], TYPE["standfirst"], 560)
+    typer.stack(16, end + 8, body, TYPE["standfirst"], COLOURS["ink"], 25)
 
-    masthead(draw)
-    draw.rectangle([0, 96, 1024, 100], fill=PALETTE["gold"])
+    pen.rectangle([608, 112, 1008, 352], outline=COLOURS["navy"], width=2)
+    night_city(pen, 610, 114, 1006, 350)
 
-    # Lead story: words on the left, picture on the right.
-    draw.text((16, 118), LEAD["kicker"], font=FONTS["kicker"],
-              fill=PALETTE["red"])
-    head = flow.wrap(LEAD["head"], FONTS["lead_head"], 576)
-    end = flow.block(16, 146, head, FONTS["lead_head"], PALETTE["ink"], 44)
-    body = flow.wrap(LEAD["body"], FONTS["lead_body"], 576)
-    flow.block(16, end + 10, body, FONTS["lead_body"], PALETTE["ink"], 26)
+    spots = [(16, 364), (520, 364), (16, 596), (520, 596)]
+    for item, (px, py) in zip(CARDS, spots):
+        story_card(typer, pen, px, py, 488, 220, item)
 
-    draw.rectangle([608, 112, 1008, 368], outline=PALETTE["navy"], width=2)
-    skyline(draw, 610, 114, 1006, 366)
+    pen.rectangle([16, 828, 1008, 892], fill=COLOURS["teal"])
+    climate_globe(pen, 56, 860, 24)
+    pen.text((96, 838), "6 · CLIMATE  ·  ANTALYA — NEARLY 200 NATIONS",
+             font=TYPE["kicker"], fill=COLOURS["ember"])
+    pen.text((96, 860), "COP31 TALKS OVERRUN — NO FOSSIL-FUEL DEAL",
+             font=TYPE["strip_title"], fill=COLOURS["white"])
 
-    spots = [(16, 384), (520, 384), (16, 644), (520, 644)]
-    for spec, (px, py) in zip(PANELS, spots):
-        card(flow, draw, px, py, 488, 248, spec)
+    pen.rectangle([0, 904, 1024, 1024], fill=COLOURS["deep"])
+    label = "ALSO TODAY — 10 MORE"
+    lw = pen.textlength(label, font=TYPE["ticker_title"])
+    pen.rounded_rectangle([16, 914, 16 + lw + 28, 944], radius=14, fill=COLOURS["gold"])
+    pen.text((30, 919), label, font=TYPE["ticker_title"], fill=COLOURS["navy"])
+    lines = typer.ticker_lines(MORE_TODAY, TYPE["ticker"], 992, limit=3)
+    y = 950
+    for line in lines:
+        pen.text((16, y), line, font=TYPE["ticker"], fill=COLOURS["white"])
+        y += 22
 
-    ticker(flow, draw)
-
-    here = os.path.dirname(os.path.abspath(__file__))
-    target = os.path.join(here, "entry.png")
+    folder = os.path.dirname(os.path.abspath(__file__))
+    target = os.path.join(folder, "entry.png")
     img.save(target, "PNG")
     print("wrote", target, img.size, os.path.getsize(target), "bytes")
 
 
 if __name__ == "__main__":
-    main()
+    build()
