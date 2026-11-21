@@ -1,68 +1,69 @@
-// news-image-20261121 entrypoint (Node 22, standard library only).
+// news-image-20261121 entrypoint.
 //
-// The image is drawn at build time by draw.py (pure Pillow: flat vector
-// pictograms and wrapped text, no network, no randomness) and shipped in
-// this repository as entry.png. This program only moves those exact bytes
-// to /output/entry.png, after proving they are a whole PNG inside the
-// competition's gate (at most 1 MiB, at most 1024 by 1024 pixels). Copying
-// bytes keeps both grader runs byte-identical by construction.
+// The front page is rendered ahead of time by draw.py (Pillow, no network,
+// no randomness) and committed here as entry.png. All this program does is
+// carry those exact bytes to the grader's output file, after checking the
+// PNG is whole and inside the competition gates (<= 1 MiB, <= 1024x1024).
+// Byte-for-byte copying keeps the two grading runs identical.
 //
-// Local run: mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
+// Local check:  mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const PNG_MAGIC = Buffer.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-]);
-const MAX_BYTES = 1048576;
-const MAX_PX = 1024;
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const BYTE_LIMIT = 1024 * 1024;
+const SIDE_LIMIT = 1024;
 
-function pngDimensions(bytes: Buffer): [number, number] {
-  // A PNG starts with an 8-byte signature, then a 4-byte length, "IHDR",
-  // then width and height as big-endian uint32. Anything else is not a
-  // whole PNG header.
-  if (bytes.length < 33) {
-    throw new Error("entry.png is too short to hold a PNG header");
+type PngInfo = { bytes: Buffer; width: number; height: number };
+
+function loadEntryPng(path: string): PngInfo {
+  if (!existsSync(path)) {
+    throw new Error(`missing entry image: ${path}`);
   }
-  if (!bytes.subarray(0, PNG_MAGIC.length).equals(PNG_MAGIC)) {
-    throw new Error("entry.png is not a PNG file");
+  const bytes = readFileSync(path);
+  if (bytes.length > BYTE_LIMIT) {
+    throw new Error(`entry.png is ${bytes.length} bytes, over the 1 MiB cap`);
   }
-  if (bytes.toString("latin1", 12, 16) !== "IHDR") {
-    throw new Error("entry.png has no IHDR chunk where a PNG must");
+  const magic = [...bytes.subarray(0, 8)];
+  if (magic.some((b, i) => b !== PNG_SIGNATURE[i])) {
+    throw new Error("entry.png does not start with a PNG signature");
   }
-  return [bytes.readUInt32BE(16), bytes.readUInt32BE(20)];
+  if (bytes.length < 29 || bytes.toString("ascii", 12, 16) !== "IHDR") {
+    throw new Error("entry.png has no IHDR chunk in the expected place");
+  }
+  return {
+    bytes,
+    width: bytes.readUInt32BE(16),
+    height: bytes.readUInt32BE(20),
+  };
 }
 
-function main(): void {
-  const repoDir = dirname(fileURLToPath(import.meta.url));
-  const source = join(repoDir, "entry.png");
-  const outDir = process.env.MAKEFUN_OUTPUT_DIR ?? "/output";
-  const target = join(outDir, "entry.png");
-
-  const bytes = readFileSync(source);
-  if (bytes.length > MAX_BYTES) {
+function run(): void {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const png = loadEntryPng(join(here, "entry.png"));
+  if (png.width > SIDE_LIMIT || png.height > SIDE_LIMIT) {
     throw new Error(
-      `entry.png is ${bytes.length} bytes, over the 1 MiB gate`,
+      `entry.png is ${png.width}x${png.height}, over the 1024x1024 cap`,
     );
   }
-  const [width, height] = pngDimensions(bytes);
-  if (width > MAX_PX || height > MAX_PX) {
-    throw new Error(
-      `entry.png is ${width}x${height}, over the 1024x1024 gate`,
-    );
-  }
-
+  const outDir = process.env.MAKEFUN_OUTPUT_DIR || "/output";
   mkdirSync(outDir, { recursive: true });
-  writeFileSync(target, bytes);
-  // Prove the copy landed whole: the bytes on disk must match the source
-  // exactly, so both grader runs see the same image.
-  const written = readFileSync(target);
-  if (!written.equals(bytes)) {
-    throw new Error("written entry.png does not match the source bytes");
+  const dest = join(outDir, "entry.png");
+  writeFileSync(dest, png.bytes);
+  const again = readFileSync(dest);
+  if (!again.equals(png.bytes)) {
+    throw new Error("copy check failed: bytes on disk differ from entry.png");
   }
-  console.log(`wrote ${target} (${bytes.length} bytes, ${width}x${height})`);
+  console.log(
+    `wrote ${dest} (${png.bytes.length} bytes, ${png.width}x${png.height})`,
+  );
 }
 
-main();
+try {
+  run();
+} catch (err) {
+  console.error(`error: ${err instanceof Error ? err.message : err}`);
+  process.exit(1);
+}
