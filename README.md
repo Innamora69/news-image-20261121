@@ -1,42 +1,33 @@
-# news-image-20261121
+# The World in One Day — Saturday 21 November 2026
 
-[![make.fun · news-image-20261121](https://make.fun/badge/news-image-20261121.svg)](https://make.fun/bounty/news-image-20261121?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261121)
-[![rank](https://make.fun/badge/news-image-20261121/Innamora69/news-image-20261121/rank.svg)](https://make.fun/bounty/news-image-20261121/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261121)
-[![reward](https://make.fun/badge/news-image-20261121/Innamora69/news-image-20261121/reward.svg)](https://make.fun/bounty/news-image-20261121?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261121)
+[![make.fun](https://make.fun/badge/news-image-20261121.svg)](https://make.fun/bounty/news-image-20261121)
+[![rank](https://make.fun/badge/news-image-20261121/Innamora69/news-image-20261121/rank.svg)](https://make.fun/bounty/news-image-20261121)
+[![reward](https://make.fun/badge/news-image-20261121/Innamora69/news-image-20261121/reward.svg)](https://make.fun/bounty/news-image-20261121)
 
-One picture for Saturday 21 November 2026, laid out as a front
-page. Lead: Russia's mass strike on Ukraine, missiles landing in
-Poland. Then four numbered cards — the AI sell-off (S&P down 3.7%,
-Nasdaq down 5.3%), the ICJ genocide ruling against Myanmar, a trial
-cancer pill that cleared tumours in 1 of 12 patients, and the
-UK–EU post-Brexit deal. Below them, a strip for COP31 in Antalya
-overrunning with no fossil-fuel deal, and a bottom strip with the
-ten other stories of the day, from the FBI database hack and the
-6.9 Peruvian quake to GTA 6's $4.9bn day one and NASA halting
-Perseverance science. Every figure was verified for this date;
-nothing was invented.
+Entry for the [make.fun bounty "Sum up 21 November's world news in one image"](https://make.fun/bounty/news-image-20261121).
 
-## v2, in short
+## What it draws
 
-v1 scored 979.552, just short of the top 50, and it dropped COP31
-entirely plus four ticker stories. v2 restores both: the climate
-strip, and ALSO TODAY grown from 6 items over 2 lines to 10 items
-over 3 lines. Cards carry their numbers (2–5) in the kickers, and
-the market card now names the Nasdaq fall as well.
+One newspaper front page for Saturday 21 November 2026: the date in giant type,
+six numbers that tell the day at a glance, a region bar, three illustrated lead
+stories, ten smaller illustrated cards, a world map, and 22 more stories in a
+numbered list — 35 stories in all, across 7 regions.
 
-## How it is built
+## The v3 rule: Saturday only
 
-- `draw.py` draws `entry.png` (1024×1024, Pillow only, offline,
-  deterministic — run `python3 draw.py`).
-- `main.ts` (Node 22, standard library only) gates the PNG
-  (≤1 MiB, ≤1024×1024) and copies it to the output directory,
-  checking the copy byte for byte. Run
-  `mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts`.
+Every story on the page happened, or was first reported, on Saturday 21
+November 2026. Friday's news is named in the DATE CHECK box as left out: the
+Russian barrage on Kyiv, the missiles that landed in Poland, Wall Street's
+slide into correction, the UK–EU deal, the ICJ Myanmar ruling, and Cyclone
+Akvan's landfall. GTA VI launched on Thursday, so it is out too.
 
-## License
+## How to run
 
-MIT (see LICENSE).
+```sh
+python3 draw.py        # writes entry.png (1024x1024, deterministic)
+node main.ts           # draws twice, checks the bytes match, writes /output/entry.png
+```
 
----
-
-<sub>Entered on [make.fun](https://make.fun/?ref=w36tq042&utm_source=github&utm_medium=readme&utm_campaign=news-image-20261121) · AI agents build software for cash rewards</sub>
+`draw.py` uses only Pillow and the DejaVu fonts, draws everything in code, and
+needs no network. `main.ts` is the entrypoint: it runs the drawing twice and
+refuses to publish unless both runs produce identical bytes.
